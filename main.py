@@ -1,6 +1,6 @@
 """
-SQL Server MCP - AZURE WEB APP PRODUCTION VERSION
-Hardcoded configuration for easy deployment
+SQL Server MCP - AZURE PRODUCTION VERSION with pymssql
+Using original database settings
 """
 
 import os
@@ -8,7 +8,7 @@ import sys
 import logging
 import json
 from typing import Any, Dict, List, Optional
-import pyodbc
+import pymssql
 from datetime import datetime, date
 
 from fastapi import FastAPI, HTTPException
@@ -17,129 +17,107 @@ from fastapi.responses import HTMLResponse
 import uvicorn
 
 # ============================================================================
-# HARDCODED CONFIGURATION FOR AZURE DEPLOYMENT
+# ORIGINAL DATABASE SETTINGS - HARDCODED FOR AZURE
 # ============================================================================
 
-# Database Configuration - Hardcoded
+# Your Original Database Configuration
 DB_SERVER = "sqltpt.database.windows.net"
-DB_DATABASE = "NorthWinds Updated"
+DB_DATABASE = "NorthWinds Updated" 
 DB_USERNAME = "sqladmin"
 DB_PASSWORD = "Wind0wsazure@123"
 
-# Azure Web App Configuration
-# Use Azure's PORT environment variable if available, otherwise default to 8000
+# Azure Configuration
 PORT = int(os.environ.get('PORT', 8000))
 HOST = "0.0.0.0"
 
-# MCP Server Configuration
+# MCP Server Configuration-m
 MCP_SERVER_NAME = "SQL Server MCP"
 MCP_SERVER_VERSION = "1.0.0"
-MCP_DESCRIPTION = "Model Context Protocol server for MS SQL Server database operations"
+MCP_DESCRIPTION = "Model Context Protocol server for MS SQL Server with pymssql"
 
-# Security Settings
+# Settings
 QUERY_TIMEOUT = 30
 MAX_ROWS_RETURNED = 1000
-ENABLE_WRITE_OPERATIONS = False
-
-# Logging Configuration
-LOGGING_LEVEL = "INFO"
 LOG_SQL_QUERIES = True
-
-# CORS Settings - Open for all origins (adjust for production security)
-CORS_ORIGINS = ["*"]
-CORS_CREDENTIALS = True
-CORS_METHODS = ["*"]
-CORS_HEADERS = ["*"]
 
 # ============================================================================
 # LOGGING SETUP
 # ============================================================================
 
 logging.basicConfig(
-    level=getattr(logging, LOGGING_LEVEL),
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# DATABASE MANAGER
+# DATABASE MANAGER WITH PYMSSQL
 # ============================================================================
 
 class DatabaseManager:
-    """Database connection and operations manager with hardcoded Azure SQL config"""
+    """Database manager using pymssql for Azure compatibility"""
     
     def __init__(self):
-        self.connection_string = self._build_connection_string()
-        logger.info("Database manager initialized with Azure SQL Database")
-    
-    def _build_connection_string(self) -> str:
-        """Build SQL Server connection string for Azure SQL Database"""
-        # Use ODBC Driver 18 for Azure Web Apps (Linux)
-        driver = "{ODBC Driver 18 for SQL Server}"
-        
-        conn_str = (
-            f"Driver={driver};"
-            f"Server=tcp:{DB_SERVER},1433;"
-            f"Database={DB_DATABASE};"
-            f"Uid={DB_USERNAME};"
-            f"Pwd={DB_PASSWORD};"
-            f"Encrypt=yes;"
-            f"TrustServerCertificate=no;"
-            f"Connection Timeout={QUERY_TIMEOUT};"
-        )
-        
-        logger.info(f"Connection string built for server: {DB_SERVER}")
-        return conn_str
+        self.server = DB_SERVER
+        self.database = DB_DATABASE  
+        self.username = DB_USERNAME
+        self.password = DB_PASSWORD
+        logger.info(f"Database manager initialized for {self.server}/{self.database}")
     
     def get_connection(self):
-        """Get database connection"""
+        """Get database connection using pymssql"""
         try:
-            conn = pyodbc.connect(self.connection_string)
-            logger.debug("Database connection established successfully")
+            conn = pymssql.connect(
+                server=self.server,
+                user=self.username,
+                password=self.password,
+                database=self.database,
+                timeout=QUERY_TIMEOUT
+            )
+            logger.debug("Database connection established with pymssql")
             return conn
         except Exception as e:
             logger.error(f"Database connection failed: {e}")
             raise HTTPException(500, f"Database connection failed: {str(e)}")
     
     def execute_query(self, query: str, params: Optional[tuple] = None) -> List[Dict[str, Any]]:
-        """Execute SELECT query with Azure SQL optimizations"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            try:
-                start_time = datetime.now()
-                
-                if params:
-                    cursor.execute(query, params)
-                else:
-                    cursor.execute(query)
-                
-                columns = [column[0] for column in cursor.description] if cursor.description else []
-                
-                rows = []
-                for row in cursor.fetchall():
-                    row_dict = {}
-                    for i, value in enumerate(row):
-                        if isinstance(value, (datetime, date)):
-                            row_dict[columns[i]] = value.isoformat()
-                        elif isinstance(value, bytes):
-                            # Handle binary data
-                            row_dict[columns[i]] = f"<binary data: {len(value)} bytes>"
-                        else:
-                            row_dict[columns[i]] = value
-                    rows.append(row_dict)
-                
-                execution_time = (datetime.now() - start_time).total_seconds()
-                
-                if LOG_SQL_QUERIES:
-                    logger.info(f"Query executed in {execution_time:.3f}s, returned {len(rows)} rows")
-                
-                return rows
-                
-            except Exception as e:
-                logger.error(f"Query execution failed: {e}")
-                raise HTTPException(400, f"Query execution failed: {str(e)}")
+        """Execute SELECT query with pymssql"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor(as_dict=True) as cursor:
+                    start_time = datetime.now()
+                    
+                    if params:
+                        cursor.execute(query, params)
+                    else:
+                        cursor.execute(query)
+                    
+                    results = cursor.fetchall()
+                    
+                    # Format results properly
+                    formatted_results = []
+                    for row in results:
+                        formatted_row = {}
+                        for key, value in row.items():
+                            if isinstance(value, (datetime, date)):
+                                formatted_row[key] = value.isoformat()
+                            elif isinstance(value, bytes):
+                                formatted_row[key] = f"<binary data: {len(value)} bytes>"
+                            else:
+                                formatted_row[key] = value
+                        formatted_results.append(formatted_row)
+                    
+                    execution_time = (datetime.now() - start_time).total_seconds()
+                    
+                    if LOG_SQL_QUERIES:
+                        logger.info(f"Query executed in {execution_time:.3f}s, returned {len(formatted_results)} rows")
+                    
+                    return formatted_results
+                    
+        except Exception as e:
+            logger.error(f"Query execution failed: {e}")
+            raise HTTPException(400, f"Query execution failed: {str(e)}")
 
 # Initialize database manager
 db_manager = DatabaseManager()
@@ -149,18 +127,18 @@ db_manager = DatabaseManager()
 # ============================================================================
 
 def query_database_tool(query: str, limit: int = 100) -> Dict[str, Any]:
-    """Execute a SQL query against the database - Azure optimized"""
+    """Execute SQL query against database"""
     query_upper = query.strip().upper()
     
-    # Security: Only allow SELECT statements
     if not query_upper.startswith('SELECT'):
         return {
+            "success": False,
             "error": "Only SELECT queries are allowed for security reasons",
             "query": query,
-            "server": DB_SERVER
+            "server": DB_SERVER,
+            "timestamp": datetime.now().isoformat()
         }
     
-    # Apply row limits for Azure SQL Database efficiency
     effective_limit = min(limit, MAX_ROWS_RETURNED)
     
     if 'LIMIT' not in query_upper and 'TOP' not in query_upper:
@@ -179,6 +157,7 @@ def query_database_tool(query: str, limit: int = 100) -> Dict[str, Any]:
             "query": query,
             "server": DB_SERVER,
             "database": DB_DATABASE,
+            "connection_type": "pymssql",
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -191,7 +170,7 @@ def query_database_tool(query: str, limit: int = 100) -> Dict[str, Any]:
         }
 
 def list_tables_tool() -> Dict[str, Any]:
-    """Get a list of all tables in the Azure SQL Database"""
+    """Get list of all tables in database"""
     try:
         query = """
         SELECT 
@@ -204,7 +183,6 @@ def list_tables_tool() -> Dict[str, Any]:
         """
         results = db_manager.execute_query(query)
         
-        # Format results for better readability
         tables = []
         for row in results:
             if row['TABLE_SCHEMA'] == 'dbo':
@@ -218,6 +196,7 @@ def list_tables_tool() -> Dict[str, Any]:
             "table_count": len(tables),
             "server": DB_SERVER,
             "database": DB_DATABASE,
+            "connection_type": "pymssql",
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -229,7 +208,7 @@ def list_tables_tool() -> Dict[str, Any]:
         }
 
 def describe_table_tool(table_name: str) -> Dict[str, Any]:
-    """Get schema information for a specific table in Azure SQL Database"""
+    """Get schema information for specific table"""
     try:
         query = """
         SELECT 
@@ -242,7 +221,7 @@ def describe_table_tool(table_name: str) -> Dict[str, Any]:
             NUMERIC_SCALE,
             ORDINAL_POSITION
         FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_NAME = ?
+        WHERE TABLE_NAME = %s
         ORDER BY ORDINAL_POSITION
         """
         schema = db_manager.execute_query(query, (table_name,))
@@ -254,6 +233,7 @@ def describe_table_tool(table_name: str) -> Dict[str, Any]:
             "column_count": len(schema),
             "server": DB_SERVER,
             "database": DB_DATABASE,
+            "connection_type": "pymssql",
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -266,20 +246,13 @@ def describe_table_tool(table_name: str) -> Dict[str, Any]:
         }
 
 def get_database_info_tool() -> Dict[str, Any]:
-    """Get comprehensive information about the Azure SQL Database"""
+    """Get comprehensive database information"""
     try:
-        # Get database version and info
         queries = {
             "version": "SELECT @@VERSION as version",
             "database_name": "SELECT DB_NAME() as database_name",
             "server_name": "SELECT @@SERVERNAME as server_name",
-            "current_user": "SELECT CURRENT_USER as current_user",
-            "database_size": """
-                SELECT 
-                    SUM(CAST(FILEPROPERTY(name, 'SpaceUsed') AS bigint) * 8192.) / 1024 / 1024 as size_mb
-                FROM sys.database_files 
-                WHERE type in (0,1)
-            """
+            "current_user": "SELECT CURRENT_USER as current_user"
         }
         
         info = {}
@@ -290,7 +263,6 @@ def get_database_info_tool() -> Dict[str, Any]:
             except:
                 info[key] = "Not available"
         
-        # Get table count
         table_result = db_manager.execute_query("""
             SELECT COUNT(*) as table_count 
             FROM INFORMATION_SCHEMA.TABLES 
@@ -305,12 +277,12 @@ def get_database_info_tool() -> Dict[str, Any]:
             "server_name": info.get("server_name", DB_SERVER),
             "version": info.get("version", "Azure SQL Database"),
             "current_user": info.get("current_user", DB_USERNAME),
-            "database_size_mb": info.get("database_size", "Unknown"),
             "table_count": table_result[0]["table_count"] if table_result else 0,
             "connection_info": {
                 "server": DB_SERVER,
                 "database": DB_DATABASE,
                 "username": DB_USERNAME,
+                "connection_type": "pymssql",
                 "encrypted": True,
                 "azure_sql": True
             },
@@ -326,21 +298,13 @@ def get_database_info_tool() -> Dict[str, Any]:
         }
 
 def execute_stored_procedure_tool(procedure_name: str, parameters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Execute a stored procedure in Azure SQL Database"""
-    if not ENABLE_WRITE_OPERATIONS:
-        return {
-            "success": False,
-            "error": "Stored procedure execution is disabled for security",
-            "procedure_name": procedure_name,
-            "server": DB_SERVER
-        }
-    
+    """Execute stored procedure"""
     try:
         if parameters:
             param_list = []
             param_values = []
             for key, value in parameters.items():
-                param_list.append(f"@{key} = ?")
+                param_list.append(f"@{key} = %s")
                 param_values.append(value)
             
             query = f"EXEC {procedure_name} {', '.join(param_list)}"
@@ -357,6 +321,7 @@ def execute_stored_procedure_tool(procedure_name: str, parameters: Optional[Dict
             "row_count": len(results),
             "server": DB_SERVER,
             "database": DB_DATABASE,
+            "connection_type": "pymssql",
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -376,18 +341,19 @@ def execute_stored_procedure_tool(procedure_name: str, parameters: Optional[Dict
 MCP_TOOLS = {
     "query_database": {
         "function": query_database_tool,
-        "description": "Execute a SQL SELECT query against the Azure SQL Database.",
+        "description": "Execute a SQL SELECT query against the database. Returns structured data with metadata.",
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string", 
-                    "description": "SQL SELECT query to execute (SELECT statements only)"
+                    "description": "SQL SELECT query to execute (SELECT statements only for security)"
                 },
                 "limit": {
                     "type": "integer", 
                     "description": f"Maximum rows to return (default: 100, max: {MAX_ROWS_RETURNED})", 
                     "default": 100,
+                    "minimum": 1,
                     "maximum": MAX_ROWS_RETURNED
                 }
             },
@@ -396,7 +362,7 @@ MCP_TOOLS = {
     },
     "list_tables": {
         "function": list_tables_tool,
-        "description": "Get a list of all tables in the Azure SQL Database.",
+        "description": "Get a comprehensive list of all tables in the database.",
         "parameters": {
             "type": "object",
             "properties": {},
@@ -405,13 +371,13 @@ MCP_TOOLS = {
     },
     "describe_table": {
         "function": describe_table_tool,
-        "description": "Get detailed schema information for a specific table.",
+        "description": "Get detailed schema information for a specific table including columns, data types, and constraints.",
         "parameters": {
             "type": "object",
             "properties": {
                 "table_name": {
                     "type": "string", 
-                    "description": "Name of the table to describe"
+                    "description": "Name of the table to describe (case-sensitive)"
                 }
             },
             "required": ["table_name"]
@@ -419,7 +385,7 @@ MCP_TOOLS = {
     },
     "get_database_info": {
         "function": get_database_info_tool,
-        "description": "Get comprehensive information about the Azure SQL Database connection and server.",
+        "description": "Get comprehensive information about the database connection, server details, and database statistics.",
         "parameters": {
             "type": "object",
             "properties": {},
@@ -428,7 +394,7 @@ MCP_TOOLS = {
     },
     "execute_stored_procedure": {
         "function": execute_stored_procedure_tool,
-        "description": "Execute a stored procedure (if enabled for security).",
+        "description": "Execute a stored procedure in the database.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -438,7 +404,7 @@ MCP_TOOLS = {
                 },
                 "parameters": {
                     "type": "object", 
-                    "description": "Parameters for the stored procedure (optional)"
+                    "description": "Parameters for the stored procedure as key-value pairs (optional)"
                 }
             },
             "required": ["procedure_name"]
@@ -450,7 +416,6 @@ MCP_TOOLS = {
 # FASTAPI APPLICATION
 # ============================================================================
 
-# Create FastAPI app
 app = FastAPI(
     title=MCP_SERVER_NAME,
     description=MCP_DESCRIPTION,
@@ -459,81 +424,97 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=CORS_CREDENTIALS,
-    allow_methods=CORS_METHODS,
-    allow_headers=CORS_HEADERS,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ============================================================================
-# CUSTOM ENDPOINTS
+# API ENDPOINTS
 # ============================================================================
 
 @app.get("/")
 async def root():
-    """Root endpoint - redirects to test page"""
+    """Root endpoint with server information"""
     return {
         "name": MCP_SERVER_NAME,
         "version": MCP_SERVER_VERSION,
         "description": MCP_DESCRIPTION,
+        "status": "operational",
+        "connection_type": "pymssql",
         "endpoints": {
             "health": "/health",
             "test": "/test", 
-            "mcp": "/mcp",
-            "capabilities": "/mcp/capabilities",
-            "debug": "/debug/tools",
-            "docs": "/docs"
+            "mcp_protocol": "/mcp",
+            "mcp_capabilities": "/mcp/capabilities",
+            "debug_tools": "/debug/tools",
+            "api_docs": "/docs"
         },
         "server_info": {
+            "host": HOST,
+            "port": PORT,
             "database_server": DB_SERVER,
             "database_name": DB_DATABASE,
-            "total_tools": len(MCP_TOOLS)
+            "total_mcp_tools": len(MCP_TOOLS)
         },
         "timestamp": datetime.now().isoformat()
     }
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint for Azure App Service"""
+    """Health check endpoint for Azure monitoring"""
     try:
         with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1 as health_check")
-            result = cursor.fetchone()
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1 as health_check, GETDATE() as server_time")
+                result = cursor.fetchone()
         
         return {
             "status": "healthy",
             "timestamp": datetime.now().isoformat(),
-            "database": "connected",
-            "server": DB_SERVER,
-            "database_name": DB_DATABASE,
-            "mcp_tools": len(MCP_TOOLS),
-            "version": MCP_SERVER_VERSION
+            "database": {
+                "status": "connected",
+                "server": DB_SERVER,
+                "database": DB_DATABASE,
+                "connection_type": "pymssql",
+                "server_time": result[1].isoformat() if result else None
+            },
+            "application": {
+                "name": MCP_SERVER_NAME,
+                "version": MCP_SERVER_VERSION,
+                "tools_count": len(MCP_TOOLS)
+            }
         }
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
         return {
             "status": "unhealthy", 
             "timestamp": datetime.now().isoformat(),
-            "database": "disconnected",
-            "server": DB_SERVER,
-            "error": str(e),
-            "version": MCP_SERVER_VERSION
+            "database": {
+                "status": "disconnected",
+                "server": DB_SERVER,
+                "error": str(e)
+            }
         }
 
 @app.get("/test", response_class=HTMLResponse)
 async def test_page():
-    """Test page showing server status and available endpoints"""
-    # Check database connectivity
+    """Test page showing server status"""
     try:
         with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) as table_count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'")
-            table_count = cursor.fetchone()[0]
-        db_status = f"✅ Connected ({table_count} tables)"
+            with conn.cursor(as_dict=True) as cursor:
+                cursor.execute("""
+                    SELECT 
+                        COUNT(*) as table_count,
+                        DB_NAME() as database_name,
+                        @@SERVERNAME as server_name
+                    FROM INFORMATION_SCHEMA.TABLES 
+                    WHERE TABLE_TYPE = 'BASE TABLE'
+                """)
+                db_info = cursor.fetchone()
+        db_status = f"✅ Connected via pymssql - {db_info['table_count']} tables available"
     except Exception as e:
         db_status = f"❌ Connection failed: {str(e)}"
     
@@ -542,145 +523,42 @@ async def test_page():
     <html>
     <head>
         <title>{MCP_SERVER_NAME} - Test Page</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body {{ 
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-                margin: 0; 
-                padding: 20px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                min-height: 100vh;
-            }}
-            .container {{ 
-                max-width: 1000px; 
-                margin: 0 auto; 
-                background: white;
-                border-radius: 12px;
-                box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-                overflow: hidden;
-            }}
-            .header {{
-                background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
-                color: white;
-                padding: 30px;
-                text-align: center;
-            }}
-            .content {{ padding: 30px; }}
-            .endpoint {{ 
-                background: #f8f9fa; 
-                padding: 15px; 
-                margin: 10px 0; 
-                border-radius: 8px; 
-                border-left: 4px solid #3498db;
-                font-family: monospace;
-            }}
-            .status {{ 
-                padding: 8px 16px; 
-                border-radius: 20px; 
-                color: white; 
-                font-weight: bold;
-                display: inline-block;
-                margin: 5px 0;
-            }}
-            .success {{ background: #27ae60; }}
-            .error {{ background: #e74c3c; }}
-            .info {{ background: #3498db; }}
-            .tool {{ 
-                background: #ecf0f1; 
-                padding: 12px; 
-                margin: 8px 0; 
-                border-radius: 6px;
-                border-left: 3px solid #2ecc71;
-            }}
-            .grid {{
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 20px;
-                margin: 20px 0;
-            }}
-            .card {{
-                background: #f8f9fa;
-                padding: 20px;
-                border-radius: 8px;
-                border: 1px solid #e9ecef;
-            }}
-            @media (max-width: 768px) {{
-                .grid {{ grid-template-columns: 1fr; }}
-                .container {{ margin: 10px; }}
-                body {{ padding: 10px; }}
-            }}
+            body {{ font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }}
+            .container {{ max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }}
+            .status {{ padding: 8px 16px; border-radius: 20px; color: white; font-weight: bold; background: #27ae60; }}
+            .endpoint {{ background: #ecf0f1; padding: 10px; margin: 10px 0; border-radius: 5px; }}
         </style>
     </head>
     <body>
         <div class="container">
-            <div class="header">
-                <h1>🚀 {MCP_SERVER_NAME}</h1>
-                <p>{MCP_DESCRIPTION}</p>
-                <div class="status success">RUNNING</div>
-            </div>
+            <h1>🚀 {MCP_SERVER_NAME}</h1>
+            <p>Using <strong>pymssql</strong> for Azure compatibility</p>
+            <div class="status">OPERATIONAL</div>
             
-            <div class="content">
-                <div class="grid">
-                    <div class="card">
-                        <h2>🔗 Connection Status</h2>
-                        <p><strong>Server:</strong> {DB_SERVER}</p>
-                        <p><strong>Database:</strong> {DB_DATABASE}</p>
-                        <p><strong>Status:</strong> {db_status}</p>
-                        <p><strong>Version:</strong> {MCP_SERVER_VERSION}</p>
-                    </div>
-                    
-                    <div class="card">
-                        <h2>📊 Server Info</h2>
-                        <p><strong>Host:</strong> {HOST}:{PORT}</p>
-                        <p><strong>Tools:</strong> {len(MCP_TOOLS)} MCP tools available</p>
-                        <p><strong>Security:</strong> SELECT queries only</p>
-                        <p><strong>Max Rows:</strong> {MAX_ROWS_RETURNED}</p>
-                    </div>
-                </div>
-                
-                <h2>🌐 Available Endpoints</h2>
-                <div class="endpoint"><strong>GET /</strong> - Root endpoint (this page info)</div>
-                <div class="endpoint"><strong>GET /health</strong> - Health check for Azure monitoring</div>
-                <div class="endpoint"><strong>GET /test</strong> - This test page</div>
-                <div class="endpoint"><strong>GET /debug/tools</strong> - List all MCP tools</div>
-                <div class="endpoint"><strong>POST /mcp</strong> - Main MCP protocol endpoint</div>
-                <div class="endpoint"><strong>GET /mcp/capabilities</strong> - MCP server capabilities</div>
-                <div class="endpoint"><strong>GET /docs</strong> - FastAPI documentation</div>
-                
-                <h2>🛠️ Available MCP Tools</h2>
-    """
-    
-    # Add tools dynamically
-    for name, config in MCP_TOOLS.items():
-        html_content += f"""
-                <div class="tool">
-                    <strong>{name}</strong> - {config["description"]}
-                </div>
-        """
-    
-    html_content += f"""
-                
-                <h2>🎯 Copilot Studio Integration</h2>
-                <div class="card">
-                    <p><strong>MCP Server URL:</strong> <code>https://your-webapp-url.azurewebsites.net/mcp</code></p>
-                    <p><strong>Protocol:</strong> JSON-RPC 2.0 over HTTPS</p>
-                    <p><strong>Transport:</strong> HTTP POST</p>
-                    <p><strong>Tools Available:</strong> {len(MCP_TOOLS)} database operations</p>
-                </div>
-                
-                <div style="margin-top: 30px; padding: 20px; background: #e8f5e8; border-radius: 8px; border-left: 4px solid #27ae60;">
-                    <h3>✅ Ready for Production!</h3>
-                    <p>Your MCP server is configured and ready for Copilot Studio integration. Use the MCP endpoint URL above in your custom connector configuration.</p>
-                </div>
-                
-                <footer style="margin-top: 40px; padding: 20px; background: #f8f9fa; border-radius: 8px; text-align: center; color: #666;">
-                    <small>
-                        Last updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}<br>
-                        Powered by FastAPI • Model Context Protocol • Azure SQL Database
-                    </small>
-                </footer>
-            </div>
+            <h2>Database Status</h2>
+            <p><strong>Server:</strong> {DB_SERVER}</p>
+            <p><strong>Database:</strong> {DB_DATABASE}</p>
+            <p><strong>Status:</strong> {db_status}</p>
+            <p><strong>Connection:</strong> pymssql (Azure compatible)</p>
+            
+            <h2>Available Endpoints</h2>
+            <div class="endpoint"><strong>GET /health</strong> - Health check</div>
+            <div class="endpoint"><strong>POST /mcp</strong> - MCP protocol endpoint</div>
+            <div class="endpoint"><strong>GET /debug/tools</strong> - List MCP tools</div>
+            <div class="endpoint"><strong>GET /docs</strong> - API documentation</div>
+            
+            <h2>MCP Tools ({len(MCP_TOOLS)})</h2>
+            <ul>
+                <li>query_database - Execute SQL queries</li>
+                <li>list_tables - List database tables</li>
+                <li>describe_table - Get table schema</li>
+                <li>get_database_info - Database information</li>
+                <li>execute_stored_procedure - Execute procedures</li>
+            </ul>
+            
+            <p><strong>Ready for Copilot Studio integration!</strong></p>
+            <p><small>Timestamp: {datetime.now().isoformat()}</small></p>
         </div>
     </body>
     </html>
@@ -689,7 +567,7 @@ async def test_page():
 
 @app.get("/mcp/capabilities")
 async def mcp_capabilities():
-    """Get MCP server capabilities - standard MCP endpoint"""
+    """MCP server capabilities endpoint"""
     return {
         "protocolVersion": "2024-11-05",
         "capabilities": {
@@ -708,7 +586,7 @@ async def mcp_capabilities():
 
 @app.get("/debug/tools")
 async def list_available_tools():
-    """Debug endpoint to list all MCP tools with full details"""
+    """Debug endpoint with MCP tools information"""
     tools = []
     
     for name, config in MCP_TOOLS.items():
@@ -723,24 +601,16 @@ async def list_available_tools():
         "server_info": {
             "name": MCP_SERVER_NAME,
             "version": MCP_SERVER_VERSION,
-            "description": MCP_DESCRIPTION,
             "total_tools": len(tools),
+            "connection_type": "pymssql",
             "database": {
                 "server": DB_SERVER,
                 "database": DB_DATABASE,
-                "username": DB_USERNAME,
-                "azure_sql": True
+                "username": DB_USERNAME
             }
         },
         "available_tools": tools,
-        "configuration": {
-            "max_rows": MAX_ROWS_RETURNED,
-            "query_timeout": QUERY_TIMEOUT,
-            "write_operations": ENABLE_WRITE_OPERATIONS,
-            "log_queries": LOG_SQL_QUERIES
-        },
-        "timestamp": datetime.now().isoformat(),
-        "status": "All tools registered and ready for Copilot Studio!"
+        "timestamp": datetime.now().isoformat()
     }
 
 # ============================================================================
@@ -749,12 +619,14 @@ async def list_available_tools():
 
 @app.post("/mcp")
 async def mcp_handler(request: dict):
-    """Handle MCP JSON-RPC requests - Main integration endpoint"""
+    """Main MCP JSON-RPC protocol handler"""
     try:
-        logger.debug(f"Received MCP request: {request.get('method', 'unknown')}")
+        method = request.get("method", "unknown")
+        request_id = request.get("id", 1)
         
-        # Handle initialize request
-        if request.get("method") == "initialize":
+        logger.info(f"MCP request received: {method}")
+        
+        if method == "initialize":
             return {
                 "jsonrpc": "2.0",
                 "result": {
@@ -772,11 +644,10 @@ async def mcp_handler(request: dict):
                         "description": MCP_DESCRIPTION
                     }
                 },
-                "id": request.get("id", 1)
+                "id": request_id
             }
         
-        # Handle tools/list request
-        elif request.get("method") == "tools/list":
+        elif method == "tools/list":
             tools = []
             for name, config in MCP_TOOLS.items():
                 tools.append({
@@ -790,30 +661,27 @@ async def mcp_handler(request: dict):
                 "result": {
                     "tools": tools
                 },
-                "id": request.get("id", 1)
+                "id": request_id
             }
         
-        # Handle tools/call request
-        elif request.get("method") == "tools/call":
+        elif method == "tools/call":
             params = request.get("params", {})
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
             
             if tool_name not in MCP_TOOLS:
-                logger.warning(f"Tool '{tool_name}' not found")
                 return {
                     "jsonrpc": "2.0",
                     "error": {
                         "code": -32601,
-                        "message": f"Tool '{tool_name}' not found. Available tools: {', '.join(MCP_TOOLS.keys())}"
+                        "message": f"Tool '{tool_name}' not found. Available: {', '.join(MCP_TOOLS.keys())}"
                     },
-                    "id": request.get("id", 1)
+                    "id": request_id
                 }
             
-            # Execute the tool
             tool_function = MCP_TOOLS[tool_name]["function"]
             try:
-                logger.info(f"Executing tool: {tool_name} with args: {arguments}")
+                logger.info(f"Executing tool: {tool_name}")
                 result = tool_function(**arguments)
                 
                 return {
@@ -827,11 +695,11 @@ async def mcp_handler(request: dict):
                         ],
                         "isError": not result.get("success", True)
                     },
-                    "id": request.get("id", 1)
+                    "id": request_id
                 }
                 
             except Exception as e:
-                logger.error(f"Tool execution failed for {tool_name}: {e}")
+                logger.error(f"Tool execution failed: {e}")
                 return {
                     "jsonrpc": "2.0",
                     "result": {
@@ -842,24 +710,24 @@ async def mcp_handler(request: dict):
                                     "success": False,
                                     "error": str(e),
                                     "tool": tool_name,
+                                    "connection_type": "pymssql",
                                     "timestamp": datetime.now().isoformat()
                                 }, indent=2)
                             }
                         ],
                         "isError": True
                     },
-                    "id": request.get("id", 1)
+                    "id": request_id
                 }
         
         else:
-            logger.warning(f"Unknown method: {request.get('method')}")
             return {
                 "jsonrpc": "2.0",
                 "error": {
                     "code": -32601,
-                    "message": f"Method '{request.get('method')}' not found"
+                    "message": f"Method '{method}' not found"
                 },
-                "id": request.get("id", 1)
+                "id": request_id
             }
             
     except Exception as e:
@@ -880,34 +748,23 @@ async def mcp_handler(request: dict):
 @app.on_event("startup")
 async def startup_event():
     """Application startup event"""
-    logger.info("="*50)
-    logger.info(f"🚀 {MCP_SERVER_NAME} v{MCP_SERVER_VERSION} Starting...")
+    logger.info("=" * 50)
+    logger.info(f"🚀 {MCP_SERVER_NAME} v{MCP_SERVER_VERSION}")
+    logger.info(f"🔗 Connection: pymssql (Azure compatible)")
     logger.info(f"📊 Database: {DB_SERVER}/{DB_DATABASE}")
-    logger.info(f"🛠️  MCP Tools: {len(MCP_TOOLS)} registered")
+    logger.info(f"🛠️ MCP Tools: {len(MCP_TOOLS)} registered")
     logger.info(f"🌐 Server: {HOST}:{PORT}")
-    logger.info(f"🔒 Security: SELECT queries only, max {MAX_ROWS_RETURNED} rows")
-    logger.info("="*50)
+    logger.info("=" * 50)
     
     # Test database connection on startup
     try:
         with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'")
-            table_count = cursor.fetchone()[0]
-            logger.info(f"✅ Database connected successfully - {table_count} tables available")
+            with conn.cursor(as_dict=True) as cursor:
+                cursor.execute("SELECT COUNT(*) as table_count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'")
+                result = cursor.fetchone()
+                logger.info(f"✅ Database connected via pymssql - {result['table_count']} tables available")
     except Exception as e:
-        logger.error(f"❌ Database connection failed on startup: {e}")
+        logger.error(f"❌ Database connection failed: {e}")
 
 if __name__ == "__main__":
-    # For local development
-    logger.info(f"Starting {MCP_SERVER_NAME} locally on {HOST}:{PORT}")
-    uvicorn.run(
-        app, 
-        host=HOST, 
-        port=PORT, 
-        log_level="info",
-        access_log=True
-    )
-
-
-#Change
+    uvicorn.run(app, host=HOST, port=PORT, log_level="info")
